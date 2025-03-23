@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express } from "express";
 import { createServer, type Server } from "http";
 import cron from "node-cron";
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -15,16 +15,12 @@ import {
 } from "./services/thingspeakService";
 import { Reading } from "@shared/schema";
 import { backupService } from "./services/backupService";
-import { emulatorService } from "./services/emulatorService";
 import { insertSetpointSchema, insertSettingsSchema } from "@shared/schema";
 import { z } from "zod";
 import { aggregateReadingsByDateRange } from "./utils/dataAggregation";
 
-export async function registerRoutes(app: Express, apiRouter?: any): Promise<Server> {
+export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
-  
-  // Determinar qual router usar para as rotas de API
-  const router = apiRouter || app;
 
   // Schedule data collection using the configured REFRESH_INTERVAL (5 minutes)
   // Calcular o intervalo em segundos para o cron a partir do REFRESH_INTERVAL em ms
@@ -364,6 +360,32 @@ export async function registerRoutes(app: Express, apiRouter?: any): Promise<Ser
       res.status(500).json({ error: 'Failed to update settings' });
     }
   });
+  
+  // Get system uptime (first reading date)
+  app.get('/api/system/uptime', async (req, res) => {
+    try {
+      const firstReading = await storage.getFirstReading();
+      if (firstReading) {
+        res.json({
+          success: true,
+          firstReadingDate: firstReading.timestamp.toISOString()
+        });
+      } else {
+        // Caso não haja leituras, retornar a data atual
+        res.json({
+          success: false,
+          firstReadingDate: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching system uptime:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to fetch system uptime',
+        firstReadingDate: new Date().toISOString()
+      });
+    }
+  });
 
   // Control pump - otimizado para resposta rápida sem persistência de histórico
   app.post('/api/control/pump', async (req, res) => {
@@ -502,6 +524,27 @@ export async function registerRoutes(app: Express, apiRouter?: any): Promise<Ser
       });
     }
   });
+  
+  // Rota para obter informações de uptime do sistema
+  app.get('/api/system/uptime', async (req, res) => {
+    try {
+      // Buscar a primeira (mais antiga) leitura no banco
+      const readings = await storage.getFirstReading();
+      const firstTimestamp = readings?.timestamp || new Date().toISOString();
+      
+      res.json({ 
+        success: true, 
+        firstReadingDate: firstTimestamp
+      });
+    } catch (error) {
+      console.error('Erro ao buscar informações de uptime:', error);
+      res.status(500).json({ 
+        success: false, 
+        error: 'Erro ao buscar informações de uptime',
+        firstReadingDate: new Date().toISOString()
+      });
+    }
+  });
 
   // Rota para importar dados históricos do ThingSpeak para o banco de dados local
   app.post('/api/sync/thingspeak-to-db', async (req, res) => {
@@ -535,160 +578,6 @@ export async function registerRoutes(app: Express, apiRouter?: any): Promise<Ser
         error: 'Falha ao importar dados do ThingSpeak',
         details: error instanceof Error ? error.message : 'Erro desconhecido' 
       });
-    }
-  });
-
-  // Rotas do Emulador
-  
-  // Obter status e configuração do emulador
-  router.get('/emulator/status', (req: Request, res: Response) => {
-    try {
-      const status = emulatorService.getStatus();
-      res.json(status);
-    } catch (error) {
-      console.error('Error fetching emulator status:', error);
-      res.status(500).json({ error: 'Failed to fetch emulator status' });
-    }
-  });
-
-  // Obter configuração do emulador
-  router.get('/emulator/config', (req: Request, res: Response) => {
-    try {
-      const config = emulatorService.getConfig();
-      res.json(config);
-    } catch (error) {
-      console.error('Error fetching emulator config:', error);
-      res.status(500).json({ error: 'Failed to fetch emulator config' });
-    }
-  });
-
-  // Atualizar configuração do emulador
-  router.post('/emulator/config', (req, res) => {
-    try {
-      const updatedConfig = emulatorService.updateConfig(req.body);
-      res.json({ success: true, config: updatedConfig });
-    } catch (error) {
-      console.error('Error updating emulator config:', error);
-      res.status(500).json({ error: 'Failed to update emulator config' });
-    }
-  });
-
-  // Iniciar emulador
-  router.post('/emulator/start', (req, res) => {
-    try {
-      emulatorService.start(req.body);
-      const status = emulatorService.getStatus();
-      res.json({ success: true, message: 'Emulator started', status });
-    } catch (error) {
-      console.error('Error starting emulator:', error);
-      res.status(500).json({ error: 'Failed to start emulator' });
-    }
-  });
-
-  // Parar emulador
-  router.post('/emulator/stop', (req, res) => {
-    try {
-      emulatorService.stop();
-      const status = emulatorService.getStatus();
-      res.json({ success: true, message: 'Emulator stopped', status });
-    } catch (error) {
-      console.error('Error stopping emulator:', error);
-      res.status(500).json({ error: 'Failed to stop emulator' });
-    }
-  });
-
-  // Controlar bomba do emulador
-  router.post('/emulator/pump', (req, res) => {
-    try {
-      const schema = z.object({
-        status: z.boolean()
-      });
-      
-      const result = schema.safeParse(req.body);
-      
-      if (!result.success) {
-        return res.status(400).json({ error: 'Invalid pump control data' });
-      }
-
-      emulatorService.setPumpStatus(result.data.status);
-      res.json({ 
-        success: true, 
-        message: `Emulator pump ${result.data.status ? 'turned ON' : 'turned OFF'}`,
-        pumpStatus: result.data.status
-      });
-    } catch (error) {
-      console.error('Error controlling emulator pump:', error);
-      res.status(500).json({ error: 'Failed to control emulator pump' });
-    }
-  });
-
-  // Controlar aquecedor do emulador
-  router.post('/emulator/heater', (req, res) => {
-    try {
-      const schema = z.object({
-        status: z.boolean()
-      });
-      
-      const result = schema.safeParse(req.body);
-      
-      if (!result.success) {
-        return res.status(400).json({ error: 'Invalid heater control data' });
-      }
-
-      emulatorService.setHeaterStatus(result.data.status);
-      res.json({ 
-        success: true, 
-        message: `Emulator heater ${result.data.status ? 'turned ON' : 'turned OFF'}`,
-        heaterStatus: result.data.status
-      });
-    } catch (error) {
-      console.error('Error controlling emulator heater:', error);
-      res.status(500).json({ error: 'Failed to control emulator heater' });
-    }
-  });
-
-  // Listar cenários disponíveis
-  router.get('/emulator/scenarios', (req, res) => {
-    try {
-      const scenarios = emulatorService.getAvailableScenarios();
-      res.json({ success: true, scenarios });
-    } catch (error) {
-      console.error('Error fetching emulator scenarios:', error);
-      res.status(500).json({ error: 'Failed to fetch emulator scenarios' });
-    }
-  });
-
-  // Carregar cenário
-  router.post('/emulator/scenario', (req, res) => {
-    try {
-      const schema = z.object({
-        name: z.string()
-      });
-      
-      const result = schema.safeParse(req.body);
-      
-      if (!result.success) {
-        return res.status(400).json({ error: 'Invalid scenario data' });
-      }
-
-      const success = emulatorService.loadScenario(result.data.name);
-      
-      if (success) {
-        const config = emulatorService.getConfig();
-        res.json({ 
-          success: true, 
-          message: `Scenario '${result.data.name}' loaded successfully`,
-          config
-        });
-      } else {
-        res.status(404).json({ 
-          success: false, 
-          error: `Scenario '${result.data.name}' not found`
-        });
-      }
-    } catch (error) {
-      console.error('Error loading emulator scenario:', error);
-      res.status(500).json({ error: 'Failed to load emulator scenario' });
     }
   });
 
