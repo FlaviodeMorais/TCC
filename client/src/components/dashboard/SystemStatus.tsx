@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { formatDateTime } from '@/lib/utils';
+import { formatDateTime, calculateUptimeDays } from '@/lib/utils';
 import { Reading } from '@shared/schema';
+import { getSystemUptime } from '@/lib/thingspeakApi';
 
 // Constante para o valor de erro do sensor
 const SENSOR_ERROR_VALUE = -127;
@@ -14,12 +15,31 @@ export function SystemStatus({ latestReading, isLoading }: SystemStatusProps) {
   const [uptime, setUptime] = useState<string>('0 dias');
   const [lastReadingTime, setLastReadingTime] = useState<string>('-');
   const [connectionStatus, setConnectionStatus] = useState<'stable' | 'unstable' | 'disconnected'>('stable');
+  const [isLoadingUptime, setIsLoadingUptime] = useState<boolean>(true);
 
-  // Initialize the start date when component mounts
+  // Buscar o uptime do sistema a partir da primeira leitura
   useEffect(() => {
-    // Simulate system has been online for a random number of days (1-7)
-    const daysOnline = Math.floor(Math.random() * 7) + 1;
-    setUptime(`${daysOnline} dias`);
+    async function fetchSystemUptime() {
+      try {
+        setIsLoadingUptime(true);
+        const response = await getSystemUptime();
+        
+        if (response.success && response.firstReadingDate) {
+          const firstReadingDate = new Date(response.firstReadingDate);
+          const days = calculateUptimeDays(firstReadingDate);
+          setUptime(`${days} dias`);
+        } else {
+          setUptime('N/D');
+        }
+      } catch (error) {
+        console.error('Failed to fetch system uptime:', error);
+        setUptime('N/D');
+      } finally {
+        setIsLoadingUptime(false);
+      }
+    }
+    
+    fetchSystemUptime();
   }, []);
 
   // Update last reading time when latestReading changes
@@ -54,7 +74,7 @@ export function SystemStatus({ latestReading, isLoading }: SystemStatusProps) {
             {isLoading ? 'Carregando...' : 'Ativo'}
           </div>
           <span className="text-xs mt-1 inline-block font-light bg-white/5 px-2 py-1 rounded-md text-white/80 border border-white/10">
-            Online há {uptime}
+            {isLoadingUptime ? 'Calculando uptime...' : `Online há ${uptime}`}
           </span>
         </div>
       </div>
@@ -104,3 +124,4 @@ export function SystemStatus({ latestReading, isLoading }: SystemStatusProps) {
     </div>
   );
 }
+
