@@ -126,6 +126,35 @@ export class BackupService {
         )
       `);
 
+      // Verificar se a coluna 'key' existe na tabela settings
+      // Esta verificação é necessária para compatibilidade com a versão
+      // utilizada no Render e em outros ambientes de hospedagem
+      try {
+        // Consultar informações da tabela settings
+        const tableInfo = await this.backupDb.all("PRAGMA table_info(settings)");
+        
+        // Verificar se a coluna 'key' existe
+        const hasKeyColumn = tableInfo.some((col: any) => col.name === 'key');
+        const hasValueColumn = tableInfo.some((col: any) => col.name === 'value');
+        
+        // Se a coluna 'key' não existir, adicioná-la
+        if (!hasKeyColumn) {
+          console.log('⚠️ Coluna "key" não encontrada na tabela settings. Adicionando...');
+          await this.backupDb.exec('ALTER TABLE settings ADD COLUMN key TEXT');
+        }
+        
+        // Se a coluna 'value' não existir, adicioná-la
+        if (!hasValueColumn) {
+          console.log('⚠️ Coluna "value" não encontrada na tabela settings. Adicionando...');
+          await this.backupDb.exec('ALTER TABLE settings ADD COLUMN value TEXT');
+        }
+        
+        console.log('✅ Verificação e correção do esquema da tabela settings concluída');
+      } catch (schemaError) {
+        console.error('❌ Erro ao verificar ou modificar o esquema da tabela settings:', schemaError);
+        // Continuar a execução, não interromper todo o processo por causa deste erro
+      }
+
       // Tabela de alertas (nova tabela para backup)
       await this.backupDb.exec(`
         CREATE TABLE IF NOT EXISTS alerts (
