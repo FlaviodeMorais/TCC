@@ -11,6 +11,7 @@ export interface IStorage {
   getLatestReadings(limit: number): Promise<Reading[]>;
   getReadingsByDateRange(startDate: string, endDate: string, maxResults?: number): Promise<Reading[]>;
   saveReading(reading: InsertReading): Promise<Reading>;
+  getFirstReading(): Promise<Reading | null>; // Para cálculo de uptime
   
   // Setpoints
   getSetpoints(): Promise<Setpoint>;
@@ -97,6 +98,16 @@ export class MemStorage implements IStorage {
     return newReading;
   }
   
+  async getFirstReading(): Promise<Reading | null> {
+    // Ordenar leituras por timestamp (a mais antiga primeiro)
+    const sortedReadings = [...this.readings].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    // Retornar a leitura mais antiga se houver alguma
+    return sortedReadings.length > 0 ? sortedReadings[0] : null;
+  }
+  
   async getSetpoints(): Promise<Setpoint> {
     return this.setpoints;
   }
@@ -164,7 +175,7 @@ export class MemStorage implements IStorage {
 
 // For real storage implementation using SQLite
 export class SqliteStorage implements IStorage {
-  private db;
+  private db: any;
   private initialized = false;
 
   constructor() {
@@ -197,6 +208,36 @@ export class SqliteStorage implements IStorage {
        LIMIT ?`, 
       [limit]
     );
+  }
+  
+  async getFirstReading(): Promise<Reading | null> {
+    await this.ensureInitialized();
+    
+    try {
+      // Buscar a leitura mais antiga ordenando pelo timestamp
+      const reading = await this.db.get(
+        `SELECT * FROM readings 
+         ORDER BY timestamp ASC 
+         LIMIT 1`
+      );
+      
+      if (!reading) {
+        return null;
+      }
+      
+      // Converter para o formato da interface
+      return {
+        id: reading.id,
+        temperature: reading.temperature,
+        level: reading.level,
+        pumpStatus: reading.pump_status === 1,
+        heaterStatus: reading.heater_status === 1,
+        timestamp: new Date(reading.timestamp)
+      };
+    } catch (error) {
+      console.error('Erro ao buscar primeira leitura:', error);
+      return null;
+    }
   }
 
   async getReadingsByDateRange(startDate: string, endDate: string, maxResults = 1000): Promise<Reading[]> {
@@ -343,7 +384,41 @@ export class SqliteStorage implements IStorage {
 
   async getSetpoints(): Promise<Setpoint> {
     await this.ensureInitialized();
-    return this.db.get('SELECT * FROM setpoints WHERE id = 1');
+    
+    const setpointsData = await this.db.get('SELECT * FROM setpoints WHERE id = 1');
+    
+    if (setpointsData) {
+      // Converter os nomes das colunas snake_case para camelCase
+      return {
+        id: setpointsData.id,
+        tempMin: setpointsData.temp_min,
+        tempMax: setpointsData.temp_max,
+        levelMin: setpointsData.level_min,
+        levelMax: setpointsData.level_max,
+        updatedAt: setpointsData.updated_at
+      };
+    }
+    
+    // Criar valores padrão se não existirem no banco
+    const defaultSetpoints = {
+      tempMin: 20.0,
+      tempMax: 30.0,
+      levelMin: 60,
+      levelMax: 90
+    };
+    
+    // Inserir valores padrão
+    await this.db.run(`
+      INSERT INTO setpoints (temp_min, temp_max, level_min, level_max)
+      VALUES (?, ?, ?, ?)
+    `, [defaultSetpoints.tempMin, defaultSetpoints.tempMax, defaultSetpoints.levelMin, defaultSetpoints.levelMax]);
+    
+    // Retornar valores padrão com ID 1
+    return {
+      id: 1,
+      ...defaultSetpoints,
+      updatedAt: new Date()
+    };
   }
 
   async updateSetpoints(setpoints: InsertSetpoint): Promise<Setpoint> {
@@ -362,15 +437,86 @@ export class SqliteStorage implements IStorage {
   async getSettings(): Promise<Setting> {
     await this.ensureInitialized();
     
-    const settings = await this.db.get('SELECT * FROM settings WHERE id = 1');
-    if (settings) return settings;
+    const settingsData = await this.db.get('SELECT * FROM settings WHERE id = 1');
     
-    // Create default settings if they don't exist
+    if (settingsData) {
+      // Converter os nomes das colunas snake_case para camelCase
+      return {
+        id: settingsData.id,
+        systemName: settingsData.system_name,
+        updateInterval: settingsData.update_interval,
+        dataRetention: settingsData.data_retention,
+        emailAlerts: !!settingsData.email_alerts,
+        pushAlerts: !!settingsData.push_alerts,
+        alertEmail: settingsData.alert_email,
+        tempCriticalMin: settingsData.temp_critical_min,
+        tempWarningMin: settingsData.temp_warning_min,
+        tempWarningMax: settingsData.temp_warning_max,
+        tempCriticalMax: settingsData.temp_critical_max,
+        levelCriticalMin: settingsData.level_critical_min,
+        levelWarningMin: settingsData.level_warning_min,
+        levelWarningMax: settingsData.level_warning_max,
+        levelCriticalMax: settingsData.level_critical_max,
+        chartType: settingsData.chart_type || 'classic',
+        darkMode: !!settingsData.dark_mode,
+        use24HourTime: !!settingsData.use_24_hour_time,
+        updatedAt: settingsData.updated_at
+      };
+    }
+    
+    // Criar configurações padrão se não existirem
     await this.db.run(`
       INSERT INTO settings (id) VALUES (1)
     `);
     
-    return this.db.get('SELECT * FROM settings WHERE id = 1');
+    // Buscar novamente e converter
+    const newSettingsData = await this.db.get('SELECT * FROM settings WHERE id = 1');
+    if (newSettingsData) {
+      return {
+        id: newSettingsData.id,
+        systemName: newSettingsData.system_name || 'Aquaponia',
+        updateInterval: newSettingsData.update_interval || 1,
+        dataRetention: newSettingsData.data_retention || 30,
+        emailAlerts: !!newSettingsData.email_alerts,
+        pushAlerts: !!newSettingsData.push_alerts,
+        alertEmail: newSettingsData.alert_email,
+        tempCriticalMin: newSettingsData.temp_critical_min || 18.0,
+        tempWarningMin: newSettingsData.temp_warning_min || 20.0,
+        tempWarningMax: newSettingsData.temp_warning_max || 28.0,
+        tempCriticalMax: newSettingsData.temp_critical_max || 30.0,
+        levelCriticalMin: newSettingsData.level_critical_min || 50,
+        levelWarningMin: newSettingsData.level_warning_min || 60,
+        levelWarningMax: newSettingsData.level_warning_max || 85,
+        levelCriticalMax: newSettingsData.level_critical_max || 90,
+        chartType: newSettingsData.chart_type || 'classic',
+        darkMode: !!newSettingsData.dark_mode,
+        use24HourTime: !!newSettingsData.use_24_hour_time,
+        updatedAt: newSettingsData.updated_at || new Date()
+      };
+    }
+    
+    // Caso ainda seja nulo, retornar valor padrão
+    return {
+      id: 1,
+      systemName: 'Aquaponia',
+      updateInterval: 1,
+      dataRetention: 30,
+      emailAlerts: true,
+      pushAlerts: true,
+      alertEmail: null,
+      tempCriticalMin: 18.0,
+      tempWarningMin: 20.0,
+      tempWarningMax: 28.0,
+      tempCriticalMax: 30.0,
+      levelCriticalMin: 50,
+      levelWarningMin: 60,
+      levelWarningMax: 85,
+      levelCriticalMax: 90,
+      chartType: 'classic',
+      darkMode: false,
+      use24HourTime: true,
+      updatedAt: new Date()
+    };
   }
 
   async updateSettings(settings: InsertSetting): Promise<Setting> {
@@ -429,6 +575,3 @@ export class SqliteStorage implements IStorage {
     return { avg, min, max, stdDev };
   }
 }
-
-// Use SQLite storage by default
-export const storage = new SqliteStorage();
