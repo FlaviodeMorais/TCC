@@ -529,8 +529,3 @@ async function updateThingspeakDirectly(field: number, value: 0 | 1): Promise<bo
     return false;
   }
 }
-
-    }
-  });
-  return res.json();
-}
