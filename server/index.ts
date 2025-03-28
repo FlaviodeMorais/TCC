@@ -18,7 +18,7 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api')) {
     console.log(`[API Route] ${req.method} ${req.path} - Body:`, req.body);
   }
-  
+
   const start = Date.now();
   const path = req.path;
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
@@ -51,7 +51,7 @@ app.use((req, res, next) => {
 (async () => {
   // Registrar as rotas da API em um roteador separado
   const server = await registerRoutes(app, apiRouter);
-  
+
   // Montar o roteador da API antes de qualquer middleware do Vite
   app.use('/api', apiRouter);
 
