@@ -3,7 +3,8 @@
  * Este script importa dados históricos e os salva no banco de dados SQLite
  */
 import { fetchHistoricalReadings } from './services/thingspeakService';
-import { storage } from './storage';
+import { SqliteStorage } from './storage';
+const storage = new SqliteStorage();
 import { InsertReading } from '@shared/schema';
 import { log } from './vite';
 
