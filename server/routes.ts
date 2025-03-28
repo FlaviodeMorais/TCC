@@ -2,7 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import cron from "node-cron";
 import { zodResolver } from '@hookform/resolvers/zod';
-import { storage } from "./storage";
+import { SqliteStorage } from "./storage";
+const storage = new SqliteStorage();
 import { syncThingspeakToDatabase } from './syncDatabase';
 import { 
   fetchLatestReading, 
