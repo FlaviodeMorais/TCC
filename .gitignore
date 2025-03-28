@@ -1,0 +1,12 @@
+﻿# Arquivos sensíveis
+.env
+*.db
+*.sqlite
+
+# Pastas de dependências
+node_modules/
+__pycache__/
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
